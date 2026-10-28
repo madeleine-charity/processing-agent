@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Processing Agent</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --side: #efeee9; --text: #1d1d1b; --muted: #77756f;
+    --border: #e3e1dc; --accent: #2f5bea; --ok: #1f8a4c; --err: #c23b30; --busy: #d08a00;
+    --soft-bg: #f1f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --panel: #1e1e1c; --side: #191918; --text: #ecebe7; --muted: #9a988f;
+      --border: #33322f; --accent: #7c9bff; --ok: #4fc27f; --err: #ff7a6e; --busy: #f0b13a;
+      --soft-bg: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
+  button { border: 0; border-radius: 8px; padding: 0 16px; background: var(--accent); color: #fff;
+    font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border);
+    padding: 5px 10px; font-weight: 500; font-size: 13px; }
+  button.secondary:hover:not(:disabled) { border-color: var(--accent); }
+
+  .app { display: grid; grid-template-columns: 230px minmax(300px, 400px) 1fr; height: 100vh; }
+  @media (max-width: 1000px) { .app { grid-template-columns: 1fr; height: auto; } }
+
+  /* sidebar */
+  .side { background: var(--side); border-right: 1px solid var(--border); display: flex;
+    flex-direction: column; min-height: 0; }
+  .side h1 { font-size: 15px; margin: 0; padding: 16px 16px 4px; }
+  .side .sub { color: var(--muted); font-size: 12px; padding: 0 16px 12px; }
+  .plist { flex: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .pitem { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 8px;
+    cursor: pointer; border: 1px solid transparent; }
+  .pitem:hover { background: var(--panel); }
+  .pitem.active { background: var(--panel); border-color: var(--border); }
+  .pitem .thumb { width: 40px; height: 30px; border-radius: 4px; background: var(--soft-bg);
+    object-fit: cover; flex: none; }
+  .pitem .meta { min-width: 0; flex: 1; }
+  .pitem .name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pitem .info { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .busy-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--busy);
+    animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .side-actions { padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .side-actions button { padding: 8px; }
+  .runner { font-size: 11px; color: var(--muted); }
+  .runner a { color: var(--accent); }
+  #sync.error { color: var(--err); }
+
+  /* chat */
+  .chat { display: flex; flex-direction: column; border-right: 1px solid var(--border);
+    background: var(--panel); min-height: 0; }
+  .chat header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .chat header h2 { margin: 0; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; max-width: 85%; }
+  .msg.text { background: var(--soft-bg); }
+  .msg.thinking { color: var(--muted); font-size: 13px; font-style: italic; border-left: 2px solid var(--border);
+    border-radius: 0; padding: 2px 10px; }
+  .msg.run { font-size: 13px; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border: 1px solid var(--border); cursor: pointer; }
+  .msg.run:hover { border-color: var(--accent); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .ok .dot { background: var(--ok); } .fail .dot { background: var(--err); }
+  .msg.version { font-size: 13px; color: var(--ok); text-align: center; border: 1px dashed var(--ok); }
+  .msg.error { color: var(--err); border: 1px solid var(--err); }
+  .status { color: var(--err); font-size: 13px; padding: 0 18px 8px; }
+  .status:empty { display: none; }
+
+  /* loading states */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .35; } 40% { transform: translateY(-4px); opacity: 1; } }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid currentColor;
+    border-right-color: transparent; animation: spin .8s linear infinite; flex: none; }
+  .spinner.small { width: 13px; height: 13px; }
+  .msg.working { display: flex; align-items: center; gap: 10px; background: var(--soft-bg); color: var(--muted);
+    font-size: 13px; align-self: flex-start; padding: 10px 14px; }
+  .msg.working .dots { display: flex; gap: 4px; }
+  .msg.working .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    animation: bounce 1.2s infinite ease-in-out; }
+  .msg.working .dots i:nth-child(2) { animation-delay: .15s; }
+  .msg.working .dots i:nth-child(3) { animation-delay: .3s; }
+  .msg.working .phase { color: var(--text); font-weight: 500; }
+  .msg.working .elapsed { font-variant-numeric: tabular-nums; }
+  #send { display: flex; align-items: center; gap: 8px; justify-content: center; min-width: 64px; }
+  .stage { position: relative; margin-top: 12px; }
+  .overlay { position: absolute; inset: 0; border-radius: 8px; background: color-mix(in srgb, var(--bg) 55%, transparent);
+    backdrop-filter: blur(2px); display: flex; justify-content: center; align-items: flex-start; padding-top: 18%; z-index: 2; }
+  .pill { display: flex; align-items: center; gap: 10px; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; font-size: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .skeleton { aspect-ratio: 4 / 3; border-radius: 8px; border: 1px solid var(--border); display: flex;
+    align-items: center; justify-content: center; margin-top: 12px;
+    background: linear-gradient(100deg, var(--soft-bg) 30%, var(--panel) 50%, var(--soft-bg) 70%) 0 0 / 200% 100%;
+    animation: shimmer 1.6s linear infinite; }
+  form { display: flex; gap: 8px; padding: 12px 14px 14px; border-top: 1px solid var(--border); }
+  textarea { flex: 1; resize: none; height: 64px; padding: 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
+  .placeholder { color: var(--muted); margin: auto; text-align: center; padding: 24px; }
+
+  /* output */
+  .output { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 18px; gap: 14px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar .label { font-weight: 600; margin-right: auto; }
+  .clip { width: 100%; max-height: 60vh; border-radius: 8px; border: 1px solid var(--border);
+    background: #000; display: block; }
+  .frames { display: flex; gap: 12px; flex-wrap: wrap; }
+  .frames figure { margin: 0; flex: 1 1 220px; max-width: 100%; }
+  .frames img { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto; object-fit: contain;
+    border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; }
+  .frames figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .versions h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  .vstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+  .vcard { flex: none; width: 150px; border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+    cursor: pointer; background: var(--panel); }
+  .vcard.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .vcard img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 4px; background: var(--soft-bg); display: block; }
+  .vcard .vn { font-size: 12px; font-weight: 600; margin-top: 4px; }
+  .vcard .vm { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <h1>Processing Agent</h1>
+    <div class="sub">Describe an image. Claude writes, runs and refines the sketch.</div>
+    <div class="plist" id="plist"></div>
+    <div class="side-actions">
+      <button id="newProject" type="button">+ New sketch</button>
+      <div class="runner" id="sync"></div>
+      <div class="runner" id="gallery" hidden></div>
+      <div class="runner" id="runner"></div>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <header>
+      <h2 id="pname">New sketch</h2>
+      <button class="secondary" id="resetChat" type="button" title="Start a fresh conversation in this project; its versions are kept" hidden>Clear chat</button>
+    </header>
+    <div class="log" id="log"></div>
+    <div class="status" id="status"></div>
+    <form id="form">
+      <textarea id="prompt" placeholder="Describe an image, e.g. a flow field of thin orange lines over deep navy, like wind on water"></textarea>
+      <button id="send">Go</button>
+    </form>
+  </section>
+
+  <section class="output">
+    <div id="view" hidden>
+      <div class="toolbar">
+        <span class="label" id="viewLabel"></span>
+        <button class="secondary" id="restoreBtn" type="button" hidden>Restore this version</button>
+        <button class="secondary" id="forkBtn" type="button" hidden>Fork into new project</button>
+        <button class="secondary" id="liveBtn" type="button">▶ Run live in Processing</button>
+        <a id="dlLink"><button class="secondary" type="button">Download .pde</button></a>
+      </div>
+      <div class="stage">
+        <div class="overlay" id="overlay" hidden><div class="pill"><span class="spinner"></span><span id="overlayText"></span></div></div>
+        <video class="clip" id="clip" autoplay loop muted playsinline controls hidden></video>
+        <div class="frames" id="frames" style="margin-top:12px"></div>
+        <div class="placeholder" id="noImage" hidden></div>
+      </div>
+    </div>
+    <div class="skeleton" id="skeleton" hidden><div class="pill"><span class="spinner"></span><span id="skeletonText">Claude is sketching…</span></div></div>
+    <div class="placeholder" id="empty">Output will appear here.<br>Try “a starry night sky with a crescent moon and twinkling stars”.</div>
+    <div class="versions" id="versions" hidden>
+      <h3>Versions</h3>
+      <div class="vstrip" id="vstrip"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const showError = (msg) => { const s = $("status"); if (s) s.textContent = "Something went wrong: " + msg; };
+window.addEventListener("error", (e) => showError(e.message));
+window.addEventListener("unhandledrejection", (e) => showError(e.reason?.message || String(e.reason)));
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+};
+
+let projects = [], current = null, es = null, busy = false;
+let runs = {}, runEls = {}, versions = [], viewing = null;  // viewing: {kind: "run"|"version", id}
+// While a project's history replays, only the chat is rebuilt; the image panel is drawn once
+// at the end ("replayed"), so it doesn't flash through every past run.
+let replaying = false, lastI = 0, pendingRun = null, versionsReady = null;
+
+// ---------- projects ----------
+async function loadProjects() {
+  projects = await api("/api/projects");
+  const list = $("plist");
+  list.innerHTML = "";
+  for (const p of projects) {
+    const el = document.createElement("div");
+    el.className = "pitem" + (current === p.slug ? " active" : "");
+    el.innerHTML = `${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : `<div class="thumb"></div>`}
+      <div class="meta"><div class="name"></div>
+      <div class="info">${p.busy ? '<span class="busy-dot"></span>working · ' : ""}${p.versions} version${p.versions === 1 ? "" : "s"}</div></div>`;
+    el.querySelector(".name").textContent = p.name;
+    el.onclick = () => selectProject(p.slug);
+    list.appendChild(el);
+  }
+  if (!projects.length) list.innerHTML = '<div class="placeholder" style="font-size:13px">No projects yet.</div>';
+}
+
+async function newProject(name, url = "/api/projects") {
+  const p = await api(url, { method: "POST", body: JSON.stringify({ name }) });
+  await loadProjects();
+  selectProject(p.slug);
+  return p;
+}
+
+// A blank chat; the first message creates the project, named after the prompt.
+function startDraft() {
+  if (es) { es.close(); es = null; }
+  current = null;
+  try { localStorage.removeItem("project"); } catch {}
+  $("pname").textContent = "New sketch";
+  $("log").innerHTML = '<div class="placeholder">Describe an image to start a new sketch.</div>';
+  $("status").textContent = "";
+  runs = {}; runEls = {}; viewing = null; versions = [];
+  $("view").hidden = true; $("empty").hidden = false; $("versions").hidden = true;
+  $("resetChat").hidden = true;
+  document.querySelectorAll(".pitem").forEach((el) => el.classList.remove("active"));
+  workEl = null;
+  setBusy(false);
+  $("prompt").focus();
+}
+
+function nameFromPrompt(text) {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ");
+  return (words.charAt(0).toUpperCase() + words.slice(1)).replace(/[.,;:!?]+$/, "") || "Untitled sketch";
+}
+
+function selectProject(slug) {
+  current = slug;
+  try { localStorage.setItem("project", slug); } catch {}
+  const p = projects.find((x) => x.slug === slug);
+  $("pname").textContent = p ? p.name : slug;
+  $("log").innerHTML = ""; $("status").textContent = "";
+  runs = {}; runEls = {}; viewing = null;
+  $("view").hidden = true; $("empty").hidden = false;
+  $("resetChat").hidden = false;
+  workEl = null;
+  replaying = true; lastI = 0; pendingRun = null;
+  setBusy(false);
+  document.querySelectorAll(".pitem").forEach((el, i) => el.classList.toggle("active", projects[i]?.slug === slug));
+  if (es) es.close();
+  es = new EventSource(`/api/projects/${slug}/events?after=0`);
+  es.onmessage = (m) => handle(JSON.parse(m.data));
+  versionsReady = loadVersions(false);
+}
+
+// After the replay: show the latest version (or the last good run before the first version),
+// with the rendering overlay on top if a run is in progress.
+async function showLatest() {
+  const slug = current;
+  await versionsReady;
+  if (slug !== current || viewing) return;
+  const lastOk = Object.values(runs).filter((r) => r.ok).pop();
+  if (versions.length) showVersion(versions[0].sha);
+  else if (lastOk) showRun(lastOk.run);
+  if (pendingRun && busy) showRendering(pendingRun);
+}
+
+// ---------- chat events ----------
+function add(cls, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.textContent = text;
+  $("log").appendChild(el);
+  if (busy && workEl) $("log").appendChild(workEl);
+  $("log").scrollTop = $("log").scrollHeight;
+  return el;
+}
+
+let busySince = 0, workEl = null, workTimer = null;
+
+function setBusy(b, since) {
+  busy = b;
+  $("send").disabled = b;
+  $("send").innerHTML = b ? '<span class="spinner small"></span>Working…' : "Go";
+  $("resetChat").disabled = b || !current;
+  clearInterval(workTimer);
+  if (b) {
+    busySince = since || busySince || Date.now();
+    if (!workEl) {
+      workEl = document.createElement("div");
+      workEl.className = "msg working";
+      workEl.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><span class="phase">Thinking</span><span class="elapsed"></span>';
+    }
+    $("log").appendChild(workEl);
+    $("log").scrollTop = $("log").scrollHeight;
+    tick();
+    workTimer = setInterval(tick, 1000);
+  } else {
+    busySince = 0;
+    workEl?.remove();
+    hideRendering();
+  }
+}
+
+function tick() {
+  if (!workEl) return;
+  const s = Math.max(0, Math.floor((Date.now() - busySince) / 1000));
+  workEl.querySelector(".elapsed").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function setPhase(text) {
+  if (workEl) workEl.querySelector(".phase").textContent = text;
+}
+
+// Server status lines -> short, friendly phases.
+function phaseFor(statusText) {
+  const run = statusText.match(/run-(\d+)/);
+  if (run) return `Rendering attempt ${parseInt(run[1], 10)}`;
+  if (/looking at/i.test(statusText)) return "Looking at the result";
+  if (/^Writing/.test(statusText)) return statusText.replace(/…$/, "");
+  return "Thinking";
+}
+
+// While a run renders, keep the last image up (dimmed) or show a placeholder canvas.
+function showRendering(runId) {
+  const n = parseInt(runId.split("-")[1], 10);
+  const hasImage = !$("view").hidden && ($("frames").querySelector("img") || !$("clip").hidden);
+  if (hasImage) {
+    $("overlayText").textContent = `Rendering attempt ${n}…`;
+    $("overlay").hidden = false;
+  } else {
+    $("view").hidden = true; $("empty").hidden = true;
+    $("skeletonText").textContent = n > 1 ? `Rendering attempt ${n}…` : "Claude is sketching…";
+    $("skeleton").hidden = false;
+  }
+}
+
+function hideRendering() {
+  $("overlay").hidden = true;
+  $("skeleton").hidden = true;
+}
+
+function handle(ev) {
+  // A reconnecting EventSource replays from the start; skip events already shown.
+  if (ev.i) { if (ev.i <= lastI) return; lastI = ev.i; }
+  switch (ev.type) {
+    case "hello": if (ev.busy) setBusy(true); break;
+    case "replayed": if (replaying) { replaying = false; showLatest(); } break;
+    // Every request is bracketed by "user" ... "idle", so replaying history gives the true state.
+    case "user": add("user", ev.text); setBusy(true, ev.t ? ev.t * 1000 : Date.now()); break;
+    case "status": setPhase(phaseFor(ev.text)); break;
+    case "thinking": add("thinking", ev.text); break;
+    case "text": {
+      // Render **bold** from Claude's replies; everything else stays plain text.
+      const el = add("text", "");
+      const esc = ev.text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+      el.innerHTML = esc.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      break;
+    }
+    case "running": {
+      runs[ev.run] = { run: ev.run, code: ev.code, frames: [] };
+      const el = add("run", "");
+      el.innerHTML = `<span class="dot"></span><span>${ev.run}: running…</span>`;
+      el.onclick = () => showRun(ev.run);
+      runEls[ev.run] = el;
+      setPhase(phaseFor(ev.run));
+      pendingRun = ev.run;
+      if (!replaying) showRendering(ev.run);
+      break;
+    }
+    case "result": {
+      runs[ev.run] = ev;
+      const el = runEls[ev.run];
+      if (el) {
+        el.classList.add(ev.ok ? "ok" : "fail");
+        const note = ev.ok ? (ev.video ? "video + " : "") + `${ev.frames.length} frame${ev.frames.length === 1 ? "" : "s"}`
+          : ev.timed_out ? "timed out" : "error";
+        el.querySelector("span:last-child").textContent = `${ev.run}: ${note}`;
+      }
+      if (pendingRun === ev.run) pendingRun = null;
+      if (!replaying) { hideRendering(); showRun(ev.run); }
+      break;
+    }
+    case "version": {
+      const el = add("version", `Saved v${ev.n}`);
+      el.style.cursor = "pointer";
+      el.onclick = () => showVersion(ev.sha);
+      if (replaying) break;
+      loadVersions(false).then(() => showVersion(ev.sha));
+      loadProjects();
+      setTimeout(loadSync, 300);
+      break;
+    }
+    case "error": add("error", ev.text); break;
+    case "idle": setBusy(false); if (!replaying) loadProjects(); break;
+  }
+}
+
+// ---------- output view ----------
+function showMedia({ label, frames, video, note, isVersion }) {
+  $("empty").hidden = true; $("view").hidden = false;
+  $("viewLabel").textContent = label;
+  const clip = $("clip");
+  if (video) { if (!clip.src.endsWith(video)) clip.src = video; clip.hidden = false; }
+  else { clip.removeAttribute("src"); clip.load(); clip.hidden = true; }
+  const box = $("frames");
+  box.innerHTML = "";
+  for (const f of frames || []) {
+    const fig = document.createElement("figure");
+    // Click opens the full-size image in a new tab for zooming in.
+    fig.innerHTML = `<a href="${f.url}" target="_blank" rel="noopener"><img src="${f.url}" alt="${f.caption}"></a>` +
+      `<figcaption>${f.caption} · click to open full size</figcaption>`;
+    box.appendChild(fig);
+  }
+  $("noImage").hidden = !note;
+  $("noImage").textContent = note || "";
+  $("restoreBtn").hidden = !isVersion || versions[0]?.sha === viewing?.id;
+  $("forkBtn").hidden = !isVersion;
+  $("dlLink").href = isVersion ? `/api/projects/${current}/versions/${viewing.id}/sketch.pde`
+                               : `/api/projects/${current}/sketch.pde`;
+  $("dlLink").download = `${current}.pde`;
+  document.querySelectorAll(".vcard").forEach((c) => c.classList.toggle("active", isVersion && c.dataset.sha === viewing.id));
+}
+
+function showRun(id) {
+  const r = runs[id];
+  viewing = { kind: "run", id };
+  showMedia({
+    label: id + (r.ok === undefined ? " · running…" : r.ok ? "" : " · failed"),
+    video: r.video,
+    frames: (r.frames || []).map((url) => ({ url, caption: "Frame " + parseInt(url.match(/frame-(\d+)/)[1], 10) })),
+    note: r.frames?.length || r.video ? ""
+      : r.ok === undefined ? "Rendering…"
+      : r.timed_out ? "This run took too long and was stopped. Claude will try a faster version."
+      : "This run didn't produce an image. Claude sees the error and will fix it.",
+  });
+}
+
+async function showVersion(sha) {
+  const v = versions.find((x) => x.sha === sha);
+  if (!v) return;
+  viewing = { kind: "version", id: sha };
+  const base = `/api/projects/${current}/versions/${sha}`;
+  const res = await fetch(`${base}/sketch.pde`).catch(() => null);
+  if (viewing?.id !== sha) return;  // something newer was shown while this loaded
+  if (!res || !res.ok) {
+    $("empty").hidden = false; $("view").hidden = true;
+    $("empty").textContent = res ? `Couldn't load v${v.n} (${res.status}).`
+      : "Can't reach the Processing Agent server. Is it still running?";
+    return;
+  }
+  showMedia({
+    label: `v${v.n} · ${v.message}`, isVersion: true,
+    video: v.video ? `${base}/preview.mp4` : null,
+    frames: [{ url: `${base}/preview.png`, caption: new Date(v.date).toLocaleString() }],
+  });
+}
+
+async function loadVersions(showLatest) {
+  if (!current) return;
+  const slug = current;
+  versions = await api(`/api/projects/${slug}/versions`);
+  if (slug !== current) return;
+  $("versions").hidden = !versions.length;
+  const strip = $("vstrip");
+  strip.innerHTML = "";
+  for (const v of versions) {
+    const c = document.createElement("div");
+    c.className = "vcard"; c.dataset.sha = v.sha;
+    c.innerHTML = `<img src="/api/projects/${slug}/versions/${v.sha}/thumb.jpg" alt="" loading="lazy">
+      <div class="vn">v${v.n}${v === versions[0] ? " · current" : ""}</div><div class="vm"></div>`;
+    c.querySelector(".vm").textContent = v.message;
+    c.onclick = () => showVersion(v.sha);
+    strip.appendChild(c);
+  }
+  if (showLatest && versions.length && !viewing) showVersion(versions[0].sha);
+}
+
+// ---------- actions ----------
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("prompt").value.trim();
+  if (!text || busy) return;
+  setBusy(true);
+  try {
+    if (!current) await newProject(nameFromPrompt(text));
+    await api(`/api/projects/${current}/prompt`, { method: "POST", body: JSON.stringify({ prompt: text }) });
+    $("prompt").value = "";
+    loadProjects();
+  } catch (err) { add("error", String(err.message || err)); setBusy(false); }
+});
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); }
+});
+$("newProject").onclick = () => startDraft();
+$("restoreBtn").onclick = async () => {
+  if (viewing?.kind !== "version") return;
+  try { await api(`/api/projects/${current}/versions/${viewing.id}/restore`, { method: "POST" }); }
+  catch (err) { add("error", String(err.message || err)); }
+};
+$("forkBtn").onclick = async () => {
+  if (viewing?.kind !== "version") return;
+  const v = versions.find((x) => x.sha === viewing.id);
+  const p = projects.find((x) => x.slug === current);
+  try { await newProject(`${p?.name || current} (from v${v?.n})`, `/api/projects/${current}/versions/${viewing.id}/fork`); }
+  catch (err) { add("error", String(err.message || err)); }
+};
+$("resetChat").onclick = async () => {
+  if (!current || busy) return;
+  await api(`/api/projects/${current}/reset-chat`, { method: "POST" });
+  selectProject(current);
+};
+$("liveBtn").onclick = async () => {
+  if (!current) return;
+  try { await api(`/api/projects/${current}/live`, { method: "POST" }); }
+  catch { add("error", "No working sketch to run yet."); }
+};
+let syncTimer = null;
+function ago(t) {
+  const s = Math.round(Date.now() / 1000 - t);
+  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : new Date(t * 1000).toLocaleTimeString();
+}
+async function loadSync() {
+  const s = await api("/api/sync").catch(() => null);
+  if (!s) return;
+  const el = $("sync");
+  el.className = "runner" + (s.state === "error" ? " error" : "");
+  const link = s.url ? `<a href="${s.url}" target="_blank" rel="noopener">GitHub</a>` : "GitHub";
+  el.innerHTML = s.state === "pushing" ? "Pushing to GitHub…"
+    : s.state === "ok" ? `Synced to ${link} · ${ago(s.at)}`
+    : s.state === "error" ? "" : (s.auto ? "Auto-pushes to GitHub after each version" : "");
+  if (s.state === "error") el.textContent = `Push failed (will retry on the next version): ${s.error}`;
+  const g = s.gallery, gel = $("gallery");
+  gel.hidden = !g;
+  if (g) {
+    gel.className = "runner" + (g.state === "error" ? " error" : "");
+    const glink = `<a href="${g.url || "https://processing-gallery.vercel.app"}" target="_blank" rel="noopener">gallery</a>`;
+    gel.innerHTML = g.state === "publishing" ? "Publishing to the gallery…"
+      : g.state === "ok" ? `Published to the ${glink} · ${ago(g.at)}`
+      : `Publishes each version to the ${glink}`;
+    if (g.state === "error") gel.textContent = `Gallery publish failed (will retry on the next version): ${g.error}`;
+  }
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(loadSync, s.state === "pushing" || s.gallery?.state === "publishing" ? 1500 : 10000);
+}
+
+(async () => {
+  api("/api/status").then((s) => { $("runner").textContent =
+    `Using ${s.backend === "api" ? "Anthropic API" : "your Claude Code login"}`; });
+  await loadProjects();
+  loadSync();
+  let last = null;
+  try { last = localStorage.getItem("project"); } catch {}
+  const pick = projects.find((p) => p.slug === last) || projects[0];
+  if (pick) selectProject(pick.slug); else startDraft();
+  setInterval(loadProjects, 10000);  // keep busy indicators fresh for other projects
+})();
+</script>
+</body>
+</html>

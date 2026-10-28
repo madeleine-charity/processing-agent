@@ -1,0 +1,10 @@
+.venv/
+runs/
+.env
+__pycache__/
+.DS_Store
+# Your sketches (their own git repo), chats and media stay on your machine.
+sketches/
+# Personal Claude Code instructions
+CLAUDE.local.md
+.pytest_cache/
