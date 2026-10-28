@@ -1,4 +1,4 @@
-.venv/
+.venv
 runs/
 .env
 __pycache__/
