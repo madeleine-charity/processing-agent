@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,6 +68,10 @@ VIDEO_FPS = 30
 MAX_VIDEO_SECONDS = 60
 
 NOISE = ("pixelDensity(2) by default", "Finished.")
+# Frames shown to Claude are scaled to fit this long edge (what the API looks at anyway) and
+# sent as JPEG: full-size frames of big canvases are 5-15 MB PNGs, over the API's image limit,
+# and Claude would see no image at all. The user still gets the full-size files.
+VIEW_LONG_EDGE = 1568
 JAVA_FRAME = re.compile(r"\(sketch\.java:(\d+)\)")
 
 
@@ -160,6 +165,23 @@ async def run_sketch(
     video, seconds = await _encode_video(sketch_dir) if ok else (None, 0.0)
     return RunResult(ok=ok, output=output, frames=captured, timed_out=timed_out and not video_cut,
                      video=video, video_seconds=seconds, video_cut=video_cut)
+
+
+def frame_for_model(frame: Path) -> tuple[Path, str]:
+    """A copy of `frame` small enough to send to Claude, and a label saying how it was scaled."""
+    data = frame.read_bytes()[:24]
+    w, h = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    label = f"Frame {int(frame.stem.split('-')[1])} ({w}x{h}"
+    view = frame.parent / "view" / f"{frame.stem}.jpg"
+    view.parent.mkdir(exist_ok=True)
+    scale = min(1.0, VIEW_LONG_EDGE / max(w, h, 1))
+    vw, vh = max(2, int(w * scale) // 2 * 2), max(2, int(h * scale) // 2 * 2)
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(frame),
+                    "-vf", f"scale={vw}:{vh}", "-q:v", "3", "-pix_fmt", "yuvj420p", str(view)],
+                   check=True, capture_output=True)
+    if scale < 1:
+        label += f", shown to you scaled to {vw}x{vh}"
+    return view, label + "):"
 
 
 async def _run_and_collect(cmd: list[str], stop_on_error: bool,

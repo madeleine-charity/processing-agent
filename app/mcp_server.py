@@ -12,7 +12,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.types import Image
 
-from .runner import run_sketch as run
+from .runner import frame_for_model, run_sketch as run
 
 SESSION_DIR = Path(os.environ["SESSION_DIR"])
 MAX_RUNS_PER_TURN = int(os.environ.get("MAX_RUNS_PER_TURN", "6"))
@@ -49,8 +49,9 @@ async def run_sketch(code: str, capture_frames: list[int], video_seconds: float 
 
     content: list[str | Image] = [f"[{run_id}] " + result.summary()]
     for p in result.frames:
-        content.append(f"Frame {int(p.stem.split('-')[1])}:")
-        content.append(Image(path=p))
+        view, label = frame_for_model(p)
+        content.append(label)
+        content.append(Image(path=view))
     return content
 
 

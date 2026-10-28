@@ -9,7 +9,7 @@ from pathlib import Path
 
 import anthropic
 
-from .runner import run_sketch
+from .runner import frame_for_model, run_sketch
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")
@@ -23,12 +23,15 @@ Workflow:
 the captured frames as images.
 2. Look at the frames critically against the user's description. If it doesn't compile, crashes, \
 or doesn't look right, fix it and run again. Stop once it's a good match; don't polish endlessly.
-3. Finish with a short note (1-3 sentences) on what you made and any notable techniques. Don't \
-repeat the code in your reply; the user sees the code from your last run.
+3. Finish with a short reply on what you made: a few sentences, or a short list for a complex \
+piece, under about 150 words. The user sees the image or video, not the code, so describe what's on \
+the canvas rather than how the code works, and don't paste code.
 
 Sketch rules:
 - Always use `void setup()` (and `void draw()` if animated). Call `size()` first in setup().
 - Use only the core Processing API, no external libraries, files, fonts, images, or network access.
+- You have no web access. If the user asks you to research something, draw on what you know, say \
+so once in a short clause, and get on with it.
 - Use the default renderer (no P2D/P3D) unless the user asks for 3D: OpenGL sketches open a window on \
 the user's screen while they run.
 - Keep it self-contained in one file and reasonably fast; each frame should render well under a second.
@@ -37,11 +40,28 @@ the user's screen while they run.
 motion from the still frames. Clips can be up to 60 s when the user asks for a long or looping video, \
 but recording takes about 10 s per second of video for heavy sketches, so iterate with short clips \
 and record the long one on the final run. For a seamless loop, make the animation repeat every \
-video_seconds * 60 frames (the clip records 60 sketch frames per second of video). For static images, call noLoop(), capture [1] and set video_seconds to 0.
+video_seconds * 60 frames (the clip records 60 sketch frames per second of video). For static \
+images, call noLoop(), capture [1] and set video_seconds to 0.
 - The limits above are current. The tool gets updated, so they override any limits you saw or \
 mentioned earlier in this conversation: when in doubt, try the run rather than refusing.
 - Drive animation from frameCount rather than millis(); recording slows the sketch down in real time.
 - Default canvas around 800x600 unless the description implies otherwise.
+
+Checking your work:
+- Frames come back scaled to fit 1568px on the long edge, and the label gives the real size. A \
+successful run with a scaled frame is not a crash. To check fine detail on a big canvas, do a test \
+run that draws a zoomed-in region (translate and scale) at normal size.
+- Check that every element you meant to draw is visible: shapes the same color as what's behind \
+them vanish, and elements can spill outside the region they belong to (use clip() or bound the math).
+
+Common bugs:
+- pow() of a negative base with a fractional exponent, sqrt() of a negative and x/0 give NaN, which \
+silently draws nothing. Guard them (abs, max, a small epsilon).
+- Seeding random per cell with nearby numbers (randomSeed(i)) gives near-identical cells. Seed once \
+in setup and keep drawing from random(), or hash the cell index first.
+- Big canvases render slowly, and the default pixel density doubles both dimensions on this Mac. \
+For canvases over about 1500px, use pixelDensity(1) unless the user wants extra sharpness, and \
+precompute per-pixel fields once (into a PImage or array) instead of every frame.
 
 When the user asks for changes in a follow-up, modify the previous sketch rather than starting over \
 unless they ask for something new.
@@ -89,7 +109,7 @@ class Session:
 
 def _image_block(path: Path) -> dict:
     data = base64.standard_b64encode(path.read_bytes()).decode()
-    return {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}
 
 
 class Agent:
@@ -196,7 +216,8 @@ class Agent:
         text = result.summary()
         content = [{"type": "text", "text": text}]
         for p in result.frames:
-            content.append({"type": "text", "text": f"Frame {int(p.stem.split('-')[1])}:"})
-            content.append(_image_block(p))
+            view, label = frame_for_model(p)
+            content.append({"type": "text", "text": label})
+            content.append(_image_block(view))
         yield {"type": "tool_result", "tool_use_id": tool.id, "content": content,
                "is_error": not result.ok}
