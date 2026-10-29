@@ -108,7 +108,7 @@ Sketches render without a window. The runner compiles with `Processing cli --bui
 | `GALLERY_DIR` | `../processing-gallery` | the gallery site folder (must be linked to Vercel) |
 | `SKETCHES_DIR` | `./sketches` | where your sketches repo lives |
 | `MAX_RUNS_PER_TURN` | `6` | max sketch runs per request |
-| `SKETCH_TIMEOUT` | `60` | seconds before a run is killed, plus 10 s per second of video. A run that runs out of time while recording, after its still frames, keeps a shorter clip |
+| `SKETCH_TIMEOUT` | `60` | seconds before a run is killed, plus 10 s per second of video. A run that runs out of time while recording keeps a shorter clip and the still frames it reached |
 | `PROCESSING_APP` | `/Applications/Processing.app` | where Processing is installed |
 | `CLAUDE_BIN` | `claude` on your PATH | path to the Claude Code CLI |
 

@@ -83,13 +83,18 @@ class RunResult:
     timed_out: bool = False
     video: Path | None = None
     video_seconds: float = 0.0
-    video_cut: bool = False  # hit the time limit after the stills, so the clip is shorter
+    video_cut: bool = False  # hit the time limit while recording, so the clip is shorter
+    requested: list[int] = field(default_factory=list)  # the still frames asked for
 
     def summary(self) -> str:
         """Text the model sees alongside the frames."""
         text = "Run succeeded." if self.ok else "Run failed."
         if self.video_cut:
             text += " The time limit was reached while recording, so the video is shorter than requested."
+            missing = [n for n in self.requested if n not in {int(p.stem.split("-")[1]) for p in self.frames}]
+            if missing:
+                text += (f" Frame {missing[0]} wasn't reached." if len(missing) == 1
+                         else f" Frames {', '.join(map(str, missing))} weren't reached.")
         elif self.timed_out:
             text += " Timed out before all frames were captured (sketch too slow or frames too far out)."
         if not self.frames and not self.timed_out:
@@ -159,12 +164,13 @@ async def run_sketch(
     )
     output = _map_java_lines("\n".join(lines).strip(), build_dir, pde)
     captured = sorted((sketch_dir / "__frames").glob("*.png"))
-    # Out of time while recording, with every still captured: keep the run and a shorter clip.
-    video_cut = timed_out and video_end > 0 and len(captured) == len(frames) and "Exception" not in output
+    # Out of time while recording: keep the run, the stills it got to and a shorter clip, rather
+    # than throw away minutes of rendering because a late still frame wasn't reached.
+    video_cut = timed_out and video_end > 0 and bool(captured) and "Exception" not in output
     ok = bool(captured) and "Exception" not in output and ((rc == 0 and not timed_out) or video_cut)
     video, seconds = await _encode_video(sketch_dir) if ok else (None, 0.0)
     return RunResult(ok=ok, output=output, frames=captured, timed_out=timed_out and not video_cut,
-                     video=video, video_seconds=seconds, video_cut=video_cut)
+                     video=video, video_seconds=seconds, video_cut=video_cut, requested=frames)
 
 
 def frame_for_model(frame: Path) -> tuple[Path, str]:

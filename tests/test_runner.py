@@ -47,6 +47,17 @@ def test_running_out_of_time_while_recording_keeps_a_shorter_clip(tmp_path, monk
 
 
 @needs_processing
+def test_a_cut_run_keeps_the_stills_it_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "RUN_TIMEOUT_S", 5)
+    monkeypatch.setattr(runner, "VIDEO_TIMEOUT_PER_S", 1)
+    code = "void setup() { size(100, 100); }\nvoid draw() { background(frameCount % 255); delay(50); }"
+    result = asyncio.run(runner.run_sketch(tmp_path / "sketch", code, [1, 340], video_seconds=6))
+    assert result.ok and result.video_cut and result.video
+    assert [p.name for p in result.frames] == ["frame-00001.png"]
+    assert "Frame 340 wasn't reached" in result.summary()
+
+
+@needs_processing
 def test_big_frames_are_scaled_down_for_claude(tmp_path):
     result = asyncio.run(runner.run_sketch(tmp_path / "sketch", "size(3600, 2000);\nbackground(30, 90, 160);", [1]))
     assert result.ok, result.output
