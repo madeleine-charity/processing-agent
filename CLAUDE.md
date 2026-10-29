@@ -26,6 +26,7 @@ Keep `--timeout-graceful-shutdown`: browsers hold SSE connections open, and with
   - `sketches/` (`SKETCHES_DIR`) is a separate git repo, ignored by this one: one folder per project, a commit per version (`[slug] vN: prompt`, tag `slug/vN`) holding `sketch/sketch.pde`, `README.md` and a small `thumb.jpg`. `ProjectStore` creates it on first run. All of `projects.py`'s `git()` calls run there, and version commits use a pathspec (`-- <slug>`) so they never sweep in other projects' changes.
   - `runs/` (gitignored): chats (`runs/<slug>/state.json`), every attempt (`run-NN/`), and each version's full-size frames, `preview.png`, `preview.mp4` and gallery `meta.json` in `runs/<slug>/media/<sha>/`. Media is staged in `media/pending/` and renamed to the commit sha after committing. `Project.media_file` falls back to git (older versions committed media), then to `thumb.jpg`.
 - **Backups:** `AUTO_PUSH=1` pushes the sketches repo to a private GitHub repo `processing-sketches` (created with `gh`). Off by default.
+- **Variants:** when one request renders several alternatives, all of them are kept: `media/<sha>/variants/<k>/` (preview.png, preview.mp4, sketch.pde) plus `variants.json`. `projects.pick_variants` picks them: runs Claude labeled with run_sketch's `variant` argument, or else a final batch of 2+ runs started in parallel (all `running` before any `result`). The app and gallery show them side by side. Before this only the last run was saved.
 - **Gallery:** `app/gallery.py` publishes to a static Vercel site in `GALLERY_DIR`, only when that folder exists and is linked to Vercel. Restores and forks are skipped. Replies are saved to `meta.json` so Clear chat doesn't lose them.
 - **Never commit** `.env`, `sketches/`, `runs/` or `CLAUDE.local.md` to this repo.
 
@@ -53,6 +54,7 @@ Keep `--timeout-graceful-shutdown`: browsers hold SSE connections open, and with
 - **UI:** `static/index.html` is one file of vanilla JS with no build step. The global `[hidden]{display:none !important}` rule matters, because other `display` rules otherwise override `hidden`.
   - Busy state is driven by the `user` → `idle` event bracket in the SSE replay, not by `hello.busy` alone. That avoids a race.
   - The events feed sends a `replayed` marker after a project's history. Until then the UI rebuilds only the chat; it then shows the latest version once, so opening a project doesn't flicker through old runs. Events carry an index `i`, and the UI skips ones it has seen, so a reconnecting EventSource doesn't duplicate the chat.
+  - While a run renders, only a small pill sits in the corner; the last image or video stays visible and playing (the user asked for no blur).
   - The sidebar and version strip load `thumb.jpg`, never the full PNG (some are 10 MB).
 
 ## Testing

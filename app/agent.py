@@ -15,6 +15,17 @@ MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")
 MAX_RUNS_PER_TURN = int(os.environ.get("MAX_RUNS_PER_TURN", "6"))
 
+# Bump TOOL_VERSION when run_sketch's abilities change. Chats started before that get
+# TOOL_CHANGES in their next message: resumed conversations otherwise trust the limits they saw
+# earlier and refuse (Claude kept saying videos were capped at 10 s after the cap was raised).
+TOOL_VERSION = 3
+TOOL_CHANGES = (
+    "video_seconds can now be up to 60 s (it used to be capped at 10), and runs that record long "
+    "videos get extra time. Frames you see may be scaled down; their label gives the real size. "
+    "run_sketch has a new `variant` argument: when you render several alternatives for the user "
+    "to compare, give each run a short label and they are all saved and shown side by side."
+)
+
 SYSTEM_PROMPT = """\
 You are a creative coder who turns text descriptions into Processing (Java mode, Processing 4) sketches.
 
@@ -44,6 +55,10 @@ video_seconds * 60 frames (the clip records 60 sketch frames per second of video
 images, call noLoop(), capture [1] and set video_seconds to 0.
 - The limits above are current. The tool gets updated, so they override any limits you saw or \
 mentioned earlier in this conversation: when in doubt, try the run rather than refusing.
+- When the user asks for several options or variations to compare, render each as its own run \
+and give each a short `variant` label (e.g. "A: Whisper"); the user sees every labeled result side \
+by side. Leave `variant` out for ordinary attempts and fixes, so only the final result is shown. \
+A request allows at most """ + str(MAX_RUNS_PER_TURN) + """ runs, so plan variants within that.
 - Drive animation from frameCount rather than millis(); recording slows the sketch down in real time.
 - Default canvas around 800x600 unless the description implies otherwise.
 
@@ -89,6 +104,11 @@ TOOLS = [
                     "type": "number",
                     "description": "Length of the video clip to record for the user (0-60). 0 for static sketches.",
                 },
+                "variant": {
+                    "type": "string",
+                    "description": "Short label when this run is one of several alternatives for the user "
+                                   "to compare (e.g. \"A: Whisper\"). Leave out for ordinary attempts.",
+                },
             },
             "required": ["code", "capture_frames", "video_seconds"],
             "additionalProperties": False,
@@ -105,6 +125,7 @@ class Session:
     run_count: int = 0
     latest_code: str | None = None
     cc_session_id: str | None = None  # Claude Code backend only
+    tool_version: int = TOOL_VERSION  # the run_sketch version this conversation last heard about
 
 
 def _image_block(path: Path) -> dict:
@@ -187,6 +208,7 @@ class Agent:
         inp = tool.input if isinstance(tool.input, dict) else json.loads(tool.input)
         code, frames = inp.get("code"), inp.get("capture_frames") or [1]
         video_seconds = inp.get("video_seconds") or 0
+        variant = (inp.get("variant") or "").strip() or None
 
         if tool.name != "run_sketch" or not isinstance(code, str):
             yield {"type": "tool_result", "tool_use_id": tool.id, "is_error": True,
@@ -211,6 +233,7 @@ class Agent:
             "type": "result", "run": run_id, "ok": result.ok, "code": code,
             "output": result.output, "frames": frame_urls, "timed_out": result.timed_out,
             "video": f"/runs/{session.id}/{run_id}/video.mp4" if result.video else None,
+            "variant": variant,
         }
 
         text = result.summary()

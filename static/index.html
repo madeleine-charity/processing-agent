@@ -94,8 +94,8 @@
   .msg.working .elapsed { font-variant-numeric: tabular-nums; }
   #send { display: flex; align-items: center; gap: 8px; justify-content: center; min-width: 64px; }
   .stage { position: relative; margin-top: 12px; }
-  .overlay { position: absolute; inset: 0; border-radius: 8px; background: color-mix(in srgb, var(--bg) 55%, transparent);
-    backdrop-filter: blur(2px); display: flex; justify-content: center; align-items: flex-start; padding-top: 18%; z-index: 2; }
+  /* A small status pill over the corner: the last image or video stays fully visible and playable. */
+  .overlay { position: absolute; top: 10px; left: 10px; z-index: 2; pointer-events: none; }
   .pill { display: flex; align-items: center; gap: 10px; background: var(--panel); color: var(--text);
     border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; font-size: 14px;
     box-shadow: 0 4px 16px rgba(0,0,0,.12); }
@@ -118,6 +118,8 @@
   .frames figure { margin: 0; flex: 1 1 220px; max-width: 100%; }
   .frames img { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto; object-fit: contain;
     border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; }
+  .frames video { display: block; width: 100%; max-height: 75vh; border-radius: 8px;
+    border: 1px solid var(--border); background: #000; }
   .frames figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .versions h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
   .vstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
@@ -184,6 +186,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const showError = (msg) => { const s = $("status"); if (s) s.textContent = "Something went wrong: " + msg; };
 window.addEventListener("error", (e) => showError(e.message));
 window.addEventListener("unhandledrejection", (e) => showError(e.reason?.message || String(e.reason)));
@@ -333,7 +336,7 @@ function phaseFor(statusText) {
   return "Thinking";
 }
 
-// While a run renders, keep the last image up (dimmed) or show a placeholder canvas.
+// While a run renders, keep the last image or video up (still playing) or show a placeholder canvas.
 function showRendering(runId) {
   const n = parseInt(runId.split("-")[1], 10);
   const hasImage = !$("view").hidden && ($("frames").querySelector("img") || !$("clip").hidden);
@@ -419,9 +422,11 @@ function showMedia({ label, frames, video, note, isVersion }) {
   box.innerHTML = "";
   for (const f of frames || []) {
     const fig = document.createElement("figure");
-    // Click opens the full-size image in a new tab for zooming in.
-    fig.innerHTML = `<a href="${f.url}" target="_blank" rel="noopener"><img src="${f.url}" alt="${f.caption}"></a>` +
-      `<figcaption>${f.caption} · click to open full size</figcaption>`;
+    // Click opens the full-size image in a new tab for zooming in. Variants can each be a clip.
+    fig.innerHTML = f.video
+      ? `<video src="${f.video}" poster="${f.url}" autoplay loop muted playsinline controls></video><figcaption>${esc(f.caption)}</figcaption>`
+      : `<a href="${f.url}" target="_blank" rel="noopener"><img src="${f.url}" alt="${esc(f.caption)}"></a>` +
+        `<figcaption>${esc(f.caption)} · click to open full size</figcaption>`;
     box.appendChild(fig);
   }
   $("noImage").hidden = !note;
@@ -461,10 +466,16 @@ async function showVersion(sha) {
       : "Can't reach the Processing Agent server. Is it still running?";
     return;
   }
+  // A request that made several alternatives shows them all side by side.
+  const variants = (v.variants || []).map((x, k) => ({
+    url: `${base}/variants/${k + 1}/preview.png`,
+    video: x.video ? `${base}/variants/${k + 1}/preview.mp4` : null,
+    caption: x.label || `Variant ${String.fromCharCode(65 + k)}`,
+  }));
   showMedia({
     label: `v${v.n} · ${v.message}`, isVersion: true,
-    video: v.video ? `${base}/preview.mp4` : null,
-    frames: [{ url: `${base}/preview.png`, caption: new Date(v.date).toLocaleString() }],
+    video: v.video && !variants.length ? `${base}/preview.mp4` : null,
+    frames: variants.length ? variants : [{ url: `${base}/preview.png`, caption: new Date(v.date).toLocaleString() }],
   });
 }
 

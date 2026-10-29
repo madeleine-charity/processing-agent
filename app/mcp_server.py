@@ -27,12 +27,15 @@ def next_run_id() -> str:
 
 
 @server.tool()
-async def run_sketch(code: str, capture_frames: list[int], video_seconds: float = 0) -> list[str | Image]:
+async def run_sketch(code: str, capture_frames: list[int], video_seconds: float = 0,
+                     variant: str = "") -> list[str | Image]:
     """Compile and run a Processing (Java mode) sketch headlessly. Captures the given frame
     numbers (1-based; use [1] for static sketches) as PNGs and returns them as images along
     with compiler/console output. Errors reference the sketch as sketch.pde with line numbers.
     video_seconds (0-60) records a video clip of an animated sketch for the user; use 0 for
-    static sketches."""
+    static sketches. variant: a short label (e.g. "A: Whisper") when this run is one of several
+    alternatives for the user to compare; every labeled result is shown side by side. Leave it
+    empty for ordinary attempts and fixes."""
     global runs_this_turn
     if runs_this_turn >= MAX_RUNS_PER_TURN:
         return [f"Run limit ({MAX_RUNS_PER_TURN}) reached for this request. "
@@ -45,6 +48,7 @@ async def run_sketch(code: str, capture_frames: list[int], video_seconds: float 
     (run_dir / "result.json").write_text(json.dumps({
         "ok": result.ok, "output": result.output, "timed_out": result.timed_out, "code": code,
         "frames": [p.name for p in result.frames], "video": bool(result.video),
+        "variant": variant.strip() or None,
     }))
 
     content: list[str | Image] = [f"[{run_id}] " + result.summary()]

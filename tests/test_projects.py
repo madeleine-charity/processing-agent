@@ -98,3 +98,97 @@ def test_first_run_starts_an_empty_sketches_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(projects, "SKETCHES_DIR", root)
     store = projects.ProjectStore(root, tmp_path / "runs")
     assert (root / ".git").is_dir() and store.projects == {}
+
+
+def test_older_chats_hear_about_tool_changes_once(store):
+    import asyncio
+    from app.agent import TOOL_VERSION
+
+    sent = []
+
+    class FakeAgent:
+        async def run_turn(self, session, prompt):
+            sent.append(prompt)
+            yield {"type": "done"}
+
+    p = store.create("Old chat")
+    p.session.cc_session_id = "resumed-session"
+    p.session.tool_version = TOOL_VERSION - 1
+    asyncio.run(store.run_prompt(p, "longer video please", FakeAgent()))
+    asyncio.run(store.run_prompt(p, "and again", FakeAgent()))
+    assert "Note from the app" in sent[0] and sent[0].endswith("longer video please")
+    assert sent[1] == "and again"
+
+
+def test_new_chats_get_no_tool_note(store):
+    import asyncio
+
+    sent = []
+
+    class FakeAgent:
+        async def run_turn(self, session, prompt):
+            sent.append(prompt)
+            yield {"type": "done"}
+
+    asyncio.run(store.run_prompt(store.create("New chat"), "a red circle", FakeAgent()))
+    assert sent == ["a red circle"]
+
+
+def _fake_run(p, run, tmp_path, video=True):
+    d = p.session.dir / run
+    (d / "sketch" / "__frames").mkdir(parents=True)
+    _png(d / "sketch" / "__frames" / "frame-00001.png")
+    if video:
+        (d / "video.mp4").write_bytes(b"not really a video")
+    return d
+
+
+def test_parallel_runs_are_all_kept_as_variants(store, tmp_path):
+    """Four runs started together (Claude rendering options in parallel) all reach the version."""
+    import asyncio
+    runs = ["run-01", "run-02", "run-03", "run-04"]
+
+    class FakeAgent:
+        async def run_turn(self, session, prompt):
+            for r in runs:
+                yield {"type": "running", "run": r, "code": f"// {r}"}
+            for r in runs:
+                session.latest_code = f"// {r}"
+                yield {"type": "result", "run": r, "ok": True, "code": f"// {r}"}
+            yield {"type": "done"}
+
+    p = store.create("Options")
+    for r in runs:
+        _fake_run(p, r, tmp_path)
+    asyncio.run(store.run_prompt(p, "show me four options", FakeAgent()))
+    [v] = p.versions()
+    assert [x["video"] for x in v["variants"]] == [True] * 4
+    for k, r in enumerate(runs, 1):
+        assert p.variant_file(v["sha"], k, "preview.png").exists()
+        assert p.variant_file(v["sha"], k, "sketch.pde").read_text() == f"// {r}"
+
+
+def test_labeled_variants_and_ordinary_retries():
+    from app.projects import pick_variants
+    ok = lambda r, label=None: {"type": "result", "run": r, "ok": True, "code": "", "variant": label}
+    run = lambda r: {"type": "running", "run": r}
+    # One at a time, labeled; B is fixed and re-run, and replaces its first try.
+    turn = [run("r1"), ok("r1", "A"), run("r2"), {"type": "result", "run": "r2", "ok": False},
+            run("r3"), ok("r3", "B"), run("r4"), ok("r4", "B")]
+    assert [r["run"] for r in pick_variants(turn)] == ["r1", "r4"]
+    # Ordinary attempts in a row are not variants, and neither is one parallel run that worked.
+    assert pick_variants([run("r1"), ok("r1"), run("r2"), ok("r2")]) == []
+    assert pick_variants([run("r1"), run("r2"), ok("r1"), {"type": "result", "run": "r2", "ok": False}]) == []
+
+
+def test_gallery_exports_variants(store, tmp_path):
+    from app import gallery
+    p = store.create("Gallery variants")
+    variants = [{"label": label, "code": f"// {label}", "video": None,
+                 "stills": [_png(tmp_path / f"{label}.png")]} for label in ("A", "B")]
+    v = p.commit_version("// B", "two options", variants[1]["stills"], None, variants)
+    p.events += [{"type": "user", "text": "two options"}, {"type": "version", **v}, {"type": "idle"}]
+    data = gallery.export([p], tmp_path / "site")
+    [entry] = data["projects"][0]["versions"]
+    assert [x["label"] for x in entry["variants"]] == ["A", "B"]
+    assert all((tmp_path / "site" / x["image"]).exists() for x in entry["variants"])

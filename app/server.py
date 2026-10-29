@@ -154,6 +154,17 @@ async def version_file(slug: str, sha: str, name: str):
                     headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
+@app.get("/api/projects/{slug}/versions/{sha}/variants/{k}/{name}")
+async def variant_file(slug: str, sha: str, k: int, name: str):
+    try:
+        path = _project(slug).variant_file(sha, k, name)
+    except ValueError:
+        raise HTTPException(404)
+    if not path.exists():
+        raise HTTPException(404, "Not in this version")
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.post("/api/projects/{slug}/versions/{sha}/restore")
 async def restore(slug: str, sha: str):
     p = _project(slug)

@@ -79,14 +79,28 @@ def _export_version(p: Project, v: dict, out: Path) -> dict:
     meta = _meta(p, v["sha"])
     # Commit subjects are cut at 60 characters; the body holds the whole prompt.
     prompt = meta.get("prompt") or git("log", "-1", "--format=%b", v["sha"]).strip() or v["message"]
-    entry = {"n": v["n"], "date": v["date"], "prompt": prompt,
-             "reply": meta.get("reply"), "image": None, "full": None, "video": None}
-    d = out / p.slug
+    # Alternatives from the same request, shown side by side.
+    variants = []
+    for k, var in enumerate(v.get("variants") or [], 1):
+        media = _export_media(p, var["video"], out / p.slug, f"{v['sha'][:10]}-{k}",
+                              lambda name, k=k: p.variant_file(v["sha"], k, name).read_bytes())
+        if media["image"] or media["video"]:
+            variants.append({"label": var.get("label"), **media})
+    # The version's own preview is one of its variants, so reuse that rather than upload it twice.
+    main = {k: variants[-1][k] for k in ("image", "full", "video")} if variants else \
+        _export_media(p, v["video"], out / p.slug, v["sha"][:10], lambda name: p.media_file(v["sha"], name))
+    return {"n": v["n"], "date": v["date"], "prompt": prompt, "reply": meta.get("reply"),
+            **main, "variants": variants}
+
+
+def _export_media(p: Project, has_video: bool, d: Path, key: str, read) -> dict:
+    """Export one preview.png (and preview.mp4) read with `read(name)` as d/<key>.jpg,
+    <key>-full.jpg and <key>.mp4; returns their content/ paths."""
+    entry = {"image": None, "full": None, "video": None}
     d.mkdir(parents=True, exist_ok=True)
-    key = v["sha"][:10]
     image, full, video = d / f"{key}.jpg", d / f"{key}-full.jpg", d / f"{key}.mp4"
     try:
-        png = p.media_file(v["sha"], "preview.png")
+        png = read("preview.png")
     except (RuntimeError, OSError):
         png = None
     if png:
@@ -101,10 +115,10 @@ def _export_version(p: Project, v: dict, out: Path) -> dict:
         entry["image"] = f"content/{p.slug}/{image.name}"
         if full.exists():
             entry["full"] = f"content/{p.slug}/{full.name}"
-    if v["video"]:
+    if has_video:
         if not video.exists():
             try:
-                _web_video(p.media_file(v["sha"], "preview.mp4"), video)
+                _web_video(read("preview.mp4"), video)
             except (RuntimeError, OSError):
                 pass
         if video.exists():
@@ -128,8 +142,8 @@ def export(projects: list[Project], gallery_dir: Path = GALLERY_DIR) -> dict:
     data = {"updated": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "projects": listed}
     (out / "gallery.json").write_text(json.dumps(data, indent=1))
     # Drop files from versions or projects that are no longer listed.
-    keep = {out / "gallery.json"} | {gallery_dir / e[k] for x in listed for e in x["versions"]
-                                     for k in ("image", "full", "video") if e[k]}
+    keep = {out / "gallery.json"} | {gallery_dir / m[k] for x in listed for e in x["versions"]
+                                     for m in (e, *e["variants"]) for k in ("image", "full", "video") if m[k]}
     for f in out.rglob("*"):
         if f.is_file() and f not in keep:
             f.unlink()

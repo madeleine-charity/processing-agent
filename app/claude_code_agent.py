@@ -167,4 +167,5 @@ class ClaudeCodeAgent:
             "output": meta["output"], "timed_out": meta["timed_out"],
             "frames": [f"/runs/{session.id}/{run_id}/sketch/__frames/{f}" for f in meta["frames"]],
             "video": f"/runs/{session.id}/{run_id}/video.mp4" if meta.get("video") else None,
+            "variant": meta.get("variant"),
         }
